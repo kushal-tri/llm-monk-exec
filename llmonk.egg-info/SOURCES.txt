@@ -1,0 +1,8 @@
+LICENSE
+README.md
+setup.py
+llmonk/utils.py
+llmonk.egg-info/PKG-INFO
+llmonk.egg-info/SOURCES.txt
+llmonk.egg-info/dependency_links.txt
+llmonk.egg-info/top_level.txt
