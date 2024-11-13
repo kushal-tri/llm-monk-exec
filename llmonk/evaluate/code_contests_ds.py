@@ -11,10 +11,15 @@ import datasets
 import pandas as pd
 
 FLAGS = flags.FLAGS
-flags.DEFINE_string("dataset", "Asap7772/code_contests_llamasft1e-5_mc_passk-part1-of-1", "Directory to load data from")
-flags.DEFINE_integer("num_workers", 4, "Number of workers to use for grading")
+flags.DEFINE_string("dataset", "Asap7772/code_contests", "Directory to load data from")
+# flags.DEFINE_string("dataset", "Asap7772/code_contests_llamasft1e-5_mc_passk-part1-of-1", "Directory to load data from")
+flags.DEFINE_integer("num_workers", 16, "Number of workers to use for grading")
 flags.DEFINE_string("save_dir", "results", "Directory to save results in")
-flags.DEFINE_string("split", "train", "Split to evaluate on")
+# flags.DEFINE_string("split", "train", "Split to evaluate on")
+flags.DEFINE_string("split", "valid", "Split to evaluate on")
+flags.DEFINE_string('solution_col', 'solutions', 'Column name for solutions')
+# flags.DEFINE_string('solution_col', 'responses', 'Column name for solutions')
+flags.DEFINE_integer('max_solutions', 16, 'Maximum number of solutions to evaluate')
 
 from llmonk.evaluate.code_contests_utils import execution_server_client
 
@@ -121,7 +126,7 @@ def grade_problems(
         )
 
 
-def load_data_from_dataset(ds):
+def load_data_from_dataset(ds, solution_col="responses", max_solutions=16):
     keys = ['test_cases', 'solutions', 'name', 'timeout']
     all_prompts = sorted(list(set(ds['prompt'])))
     prompt_to_idx = {prompt: i for i, prompt in enumerate(all_prompts)}
@@ -131,24 +136,23 @@ def load_data_from_dataset(ds):
         for i in range(len(examples['prompt'])):
             curr_prompt = examples['prompt'][i]
             which_prompt = prompt_to_idx[curr_prompt]
-            for j in range(len(examples['responses'][i])):
-                name = f"problem{which_prompt}_response{j}"
-                return_dict['name'].append(name)
-                return_dict['test_cases'].append(examples['test_cases'][i])
-                return_dict['solutions'].append(examples['responses'][i][j])
-                return_dict['timeout'].append(examples['timeout'][i])
+            name = f"problem{which_prompt}"
+            return_dict['name'].append(name)
+            return_dict['test_cases'].append(examples['test_cases'][i])
+            return_dict['solutions'].append(examples[solution_col][i][:max_solutions])
+            return_dict['timeout'].append(examples['timeout'][i])
         return return_dict
     all_cols = list(ds.column_names)
     rm_cols = [col for col in all_cols if col not in keys]
     ds_mapped = ds.map(map_fn, batched=True, num_proc=FLAGS.num_workers, remove_columns=rm_cols)
     # convert to dict of lists
     df = ds_mapped.data.to_pandas()
-    return df.to_dict(orient='list')
+    return df.to_dict(orient='records')
 
 
 def main(_):
     ds = datasets.load_dataset(FLAGS.dataset, split=FLAGS.split)
-    solutions_data = load_data_from_dataset(ds)
+    solutions_data = load_data_from_dataset(ds, solution_col=FLAGS.solution_col, max_solutions=FLAGS.max_solutions)
 
     # multiprocessing pool is used to load data
     with execution_server_client.ExecutionServerClient() as client:
