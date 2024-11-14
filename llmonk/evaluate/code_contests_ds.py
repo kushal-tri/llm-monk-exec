@@ -9,17 +9,18 @@ import re
 from absl import app, flags
 import datasets
 import pandas as pd
+import os
 
 FLAGS = flags.FLAGS
-flags.DEFINE_string("dataset", "Asap7772/code_contests", "Directory to load data from")
-# flags.DEFINE_string("dataset", "Asap7772/code_contests_llamasft1e-5_mc_passk-part1-of-1", "Directory to load data from")
-flags.DEFINE_integer("num_workers", 16, "Number of workers to use for grading")
+# flags.DEFINE_string("dataset", "Asap7772/code_contests", "Directory to load data from")
+flags.DEFINE_string("dataset", "Asap7772/code_contests_llamasft1e-5_mc_passk-part1-of-1", "Directory to load data from")
+flags.DEFINE_integer("num_workers", 1, "Number of workers to use for grading")
 flags.DEFINE_string("save_dir", "results", "Directory to save results in")
-# flags.DEFINE_string("split", "train", "Split to evaluate on")
-flags.DEFINE_string("split", "valid", "Split to evaluate on")
-flags.DEFINE_string('solution_col', 'solutions', 'Column name for solutions')
-# flags.DEFINE_string('solution_col', 'responses', 'Column name for solutions')
-flags.DEFINE_integer('max_solutions', 16, 'Maximum number of solutions to evaluate')
+# flags.DEFINE_string("split", "valid", "Split to evaluate on")
+flags.DEFINE_string("split", "train", "Split to evaluate on")
+# flags.DEFINE_string('solution_col', 'solutions', 'Column name for solutions')
+flags.DEFINE_string('solution_col', 'responses', 'Column name for solutions')
+flags.DEFINE_integer('max_solutions', 256, 'Maximum number of solutions to evaluate')
 
 from llmonk.evaluate.code_contests_utils import execution_server_client
 
@@ -85,7 +86,7 @@ def solution_is_correct(
                 break
             except:
                 if i == NUM_RETRIES - 1:
-                    raise
+                    is_correct = False
                 time.sleep(RETRY_BACKOFF**i)
 
     return is_correct
@@ -116,15 +117,6 @@ def grade_problems(
             is_corrects.append(future.result())
 
     solutions_data["is_corrects"] = is_corrects
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-    with open(output_dir / solutions_data["name"], "w") as f:
-        yaml.dump(
-            solutions_data,
-            f,
-            sort_keys=True,
-        )
-
 
 def load_data_from_dataset(ds, solution_col="responses", max_solutions=16):
     keys = ['test_cases', 'solutions', 'name', 'timeout']
@@ -172,10 +164,13 @@ def main(_):
 
             for future in tqdm(futures, desc="Running tests on problem"):
                 future.result()
-
+    
+    hf_token = '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'
+    os.environ['HF_TOKEN'] = hf_token
+    
     df = pd.DataFrame(solutions_data)
     ds = datasets.Dataset.from_pandas(df)
-    ds.push_to_hub(f"{FLAGS.dataset}_graded", hf_token = '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')
+    ds.push_to_hub(f"{FLAGS.dataset}_graded")
     
 if __name__ == "__main__":
     app.run(main)
