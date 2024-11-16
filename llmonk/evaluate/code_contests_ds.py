@@ -13,14 +13,15 @@ import os
 
 FLAGS = flags.FLAGS
 # flags.DEFINE_string("dataset", "Asap7772/code_contests", "Directory to load data from")
-flags.DEFINE_string("dataset", "Asap7772/code_contests_llamasft1e-5_mc_passk-part1-of-1", "Directory to load data from")
-flags.DEFINE_integer("num_workers", 1, "Number of workers to use for grading")
+flags.DEFINE_string("dataset", "Asap7772/code_contests_llamasft1e-7_mc_passk_train-part1-of-1", "Directory to load data from")
+flags.DEFINE_integer("num_workers", 512, "Number of workers to use for grading")
 flags.DEFINE_string("save_dir", "results", "Directory to save results in")
 # flags.DEFINE_string("split", "valid", "Split to evaluate on")
 flags.DEFINE_string("split", "train", "Split to evaluate on")
 # flags.DEFINE_string('solution_col', 'solutions', 'Column name for solutions')
 flags.DEFINE_string('solution_col', 'responses', 'Column name for solutions')
 flags.DEFINE_integer('max_solutions', 256, 'Maximum number of solutions to evaluate')
+flags.DEFINE_float('per_testcases', -1.0, 'Percentage of testcases to evaluate')
 
 from llmonk.evaluate.code_contests_utils import execution_server_client
 
@@ -118,7 +119,7 @@ def grade_problems(
 
     solutions_data["is_corrects"] = is_corrects
 
-def load_data_from_dataset(ds, solution_col="responses", max_solutions=16):
+def load_data_from_dataset(ds, solution_col="responses", max_solutions=16, per_testcases=-1):
     keys = ['test_cases', 'solutions', 'name', 'timeout']
     all_prompts = sorted(list(set(ds['prompt'])))
     prompt_to_idx = {prompt: i for i, prompt in enumerate(all_prompts)}
@@ -130,7 +131,13 @@ def load_data_from_dataset(ds, solution_col="responses", max_solutions=16):
             which_prompt = prompt_to_idx[curr_prompt]
             name = f"problem{which_prompt}"
             return_dict['name'].append(name)
-            return_dict['test_cases'].append(examples['test_cases'][i])
+            if per_testcases > 0:
+                num_testcases = len(examples['test_cases'][i])
+                num_testcases_to_keep = int(num_testcases * per_testcases)
+                test_cases = examples['test_cases'][i][:num_testcases_to_keep]
+                return_dict['test_cases'].append(test_cases)
+            else:
+                return_dict['test_cases'].append(examples['test_cases'][i])
             return_dict['solutions'].append(examples[solution_col][i][:max_solutions])
             return_dict['timeout'].append(examples['timeout'][i])
         return return_dict
@@ -144,7 +151,7 @@ def load_data_from_dataset(ds, solution_col="responses", max_solutions=16):
 
 def main(_):
     ds = datasets.load_dataset(FLAGS.dataset, split=FLAGS.split)
-    solutions_data = load_data_from_dataset(ds, solution_col=FLAGS.solution_col, max_solutions=FLAGS.max_solutions)
+    solutions_data = load_data_from_dataset(ds, solution_col=FLAGS.solution_col, max_solutions=FLAGS.max_solutions, per_testcases=FLAGS.per_testcases)
 
     # multiprocessing pool is used to load data
     with execution_server_client.ExecutionServerClient() as client:
@@ -170,7 +177,12 @@ def main(_):
     
     df = pd.DataFrame(solutions_data)
     ds = datasets.Dataset.from_pandas(df)
-    ds.push_to_hub(f"{FLAGS.dataset}_graded")
+    if FLAGS.per_testcases > 0:
+        output_name = f"{FLAGS.dataset}_graded_{FLAGS.per_testcases}"
+    else:
+        output_name = f"{FLAGS.dataset}_graded"
+    
+    ds.push_to_hub(output_name)
     
 if __name__ == "__main__":
     app.run(main)
