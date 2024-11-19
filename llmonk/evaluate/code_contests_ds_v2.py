@@ -25,6 +25,7 @@ flags.DEFINE_float('per_testcases', -1.0, 'Percentage of testcases to evaluate')
 
 from llmonk.evaluate.code_contests_utils.schema import ExecuteCodeRequest, ExecuteCodeResult
 MAX_CONCURRENT_REQUESTS = os.cpu_count() * 2
+# semaphore = threading.Semaphore(value=MAX_CONCURRENT_REQUESTS)
 NUM_RETRIES = 1
 RETRY_BACKOFF = 3
 
@@ -36,6 +37,9 @@ from llmonk.evaluate.code_contests_utils.compare_results import outputs_match
 def execute_with_input(
     code_file_name: str, input_str: str, timeout: float, memory_limit_bytes: int
 ):
+
+    # with semaphore, \
+    #  tempfile.NamedTemporaryFile(mode="w+", delete=True) as temp_input_file:
     with tempfile.NamedTemporaryFile(mode="w+", delete=True) as temp_input_file:
         temp_input_file.write(input_str)
         temp_input_file.flush()  # Ensure the data is written to disk
@@ -55,6 +59,7 @@ def execute_with_input(
                     timeout=timeout,
                 )
             except subprocess.TimeoutExpired:
+                # print(f"{cmd} {temp_input_file.name} timed out. Timeout was {timeout}")
                 return None
             
             return result.stdout.decode()
@@ -129,14 +134,14 @@ def solution_is_correct(
     is_correct = False
     code = extract_first_code(code)
     if code is not None:
-        is_correct = execute_python_code(
+        is_correct_obj = execute_python_code(
             ExecuteCodeRequest(
                 code=code,
                 input_expected_output_pairs=input_expected_output_pairs,
                 timeout=problem["timeout"] + 10,  # buffer for 10
                 memory_limit_bytes=2_000_000_000_000,  # double max limit
         ))
-    return is_correct
+    return is_correct_obj.correct
 
 
 def grade_problems(
@@ -146,18 +151,20 @@ def grade_problems(
     with concurrent.futures.ThreadPoolExecutor(
         max_workers=MAX_CONCURRENT_REQUESTS
     ) as executor:
+        future_to_index = {}
         futures = []
-        for idx, solution_data in enumerate(solutions_data):
+        for idx, solution_data in tqdm(enumerate(solutions_data), total=len(solutions_data), desc="Queued for execution: "):
             for code in solution_data["solutions"]:
                 future = executor.submit(
                             solution_is_correct,
                             code=code,
                             problem=solution_data,
                         )
-                futures.append((future, idx))
+                future_to_index[future] = idx
 
         is_corrects_list = [[]] * len(solutions_data) 
-        for i, (future, idx) in tqdm(enumerate(futures), total=len(futures), desc="Running tests on problem"):
+        for future in tqdm(concurrent.futures.as_completed(future_to_index), total=len(future_to_index), desc="Running tests on problem"):
+            idx = future_to_index[future]
             is_corrects_list[idx].append(future.result())
         
         for idx, is_corrects in enumerate(is_corrects_list):
