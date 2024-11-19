@@ -76,7 +76,8 @@ def _values_match(a: str, b: str) -> bool:
     elif isinstance(a_value, int) and isinstance(b_value, int):
         return a_value == b_value
     else:
-        raise AssertionError("Invalid case.")
+        print(f"Invalid case while value matching: a: {a}, b: {b}")
+        return False
 
 
 def outputs_match(output_a: str, output_b: str) -> bool:

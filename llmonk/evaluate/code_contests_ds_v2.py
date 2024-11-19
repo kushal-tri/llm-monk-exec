@@ -38,16 +38,14 @@ def execute_with_input(
     code_file_name: str, input_str: str, timeout: float, memory_limit_bytes: int
 ):
 
-    # with semaphore, \
-    #  tempfile.NamedTemporaryFile(mode="w+", delete=True) as temp_input_file:
-    with tempfile.NamedTemporaryFile(mode="w+", delete=True) as temp_input_file:
-        temp_input_file.write(input_str)
-        temp_input_file.flush()  # Ensure the data is written to disk
+    try:
+        with tempfile.NamedTemporaryFile(mode="w+", delete=True) as temp_input_file:
+            temp_input_file.write(input_str)
+            temp_input_file.flush()  # Ensure the data is written to disk
 
-        # Rewind the file so the subprocess reads it from the beginning
-        temp_input_file.seek(0)
+            # Rewind the file so the subprocess reads it from the beginning
+            temp_input_file.seek(0)
 
-        try:
             memory_limit_kb = math.ceil(memory_limit_bytes / 1024)
             cmd = f"ulimit -v {memory_limit_kb} && python {code_file_name}"
 
@@ -59,12 +57,13 @@ def execute_with_input(
                     timeout=timeout,
                 )
             except subprocess.TimeoutExpired:
-                # print(f"{cmd} {temp_input_file.name} timed out. Timeout was {timeout}")
+                print(f"{cmd} {temp_input_file.name} timed out. Timeout was {timeout}")
                 return None
             
             return result.stdout.decode()
-        except Exception as e:
-            return None
+    except Exception as e:
+        print(f"Failed to execute with error {e}")
+        return None
 
 def execute_python_code(request: ExecuteCodeRequest):
     try:
@@ -88,6 +87,7 @@ def execute_python_code(request: ExecuteCodeRequest):
             return ExecuteCodeResult(correct=True)
     except Exception as e:
         print(f"Failed to execute code: \n {e}")
+        return ExecuteCodeResult(correct=False)
 
 def is_valid_python(snippet):
     try:
@@ -134,15 +134,14 @@ def solution_is_correct(
     is_correct = False
     code = extract_first_code(code)
     if code is not None:
-        is_correct_obj = execute_python_code(
+        is_correct = execute_python_code(
             ExecuteCodeRequest(
                 code=code,
                 input_expected_output_pairs=input_expected_output_pairs,
                 timeout=problem["timeout"] + 10,  # buffer for 10
                 memory_limit_bytes=2_000_000_000_000,  # double max limit
-        ))
-    return is_correct_obj.correct
-
+        )).correct
+    return is_correct
 
 def grade_problems(
     solutions_data: dict,
@@ -165,7 +164,7 @@ def grade_problems(
         is_corrects_list = [[]] * len(solutions_data) 
         for future in tqdm(concurrent.futures.as_completed(future_to_index), total=len(future_to_index), desc="Running tests on problem"):
             idx = future_to_index[future]
-            is_corrects_list[idx].append(future.result())
+            is_corrects_list[idx].append(future.result(timeout=10))
         
         for idx, is_corrects in enumerate(is_corrects_list):
             solutions_data[idx]["is_corrects"] = is_corrects
@@ -205,9 +204,6 @@ def main(_):
     solutions_data = load_data_from_dataset(ds, solution_col=FLAGS.solution_col, max_solutions=FLAGS.max_solutions, per_testcases=FLAGS.per_testcases)
     grade_problems(solutions_data, FLAGS.save_dir)
 
-    hf_token = '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'
-    os.environ['HF_TOKEN'] = hf_token
-    
     df = pd.DataFrame(solutions_data)
     ds = datasets.Dataset.from_pandas(df)
     if FLAGS.per_testcases > 0:
