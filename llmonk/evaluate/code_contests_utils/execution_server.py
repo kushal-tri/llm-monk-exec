@@ -11,9 +11,9 @@ from dataclasses import dataclass
 import logging
 
 # NOTE: Schema is moved into place by the dockerfile
-from schema import ExecuteCodeRequest, ExecuteCodeResult
+from llmonk.evaluate.code_contests_utils.schema import ExecuteCodeRequest, ExecuteCodeResult
 
-from compare_results import outputs_match
+from llmonk.evaluate.code_contests_utils.compare_results import outputs_match
 
 app = FastAPI()
 
