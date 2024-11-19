@@ -23,13 +23,66 @@ flags.DEFINE_string('solution_col', 'responses', 'Column name for solutions')
 flags.DEFINE_integer('max_solutions', 256, 'Maximum number of solutions to evaluate')
 flags.DEFINE_float('per_testcases', -1.0, 'Percentage of testcases to evaluate')
 
-from llmonk.evaluate.code_contests_utils.execution_server import execute_python_code
-from llmonk.evaluate.code_contests_utils import execution_server_client
-from llmonk.evaluate.code_contests_utils.schema import ExecuteCodeRequest
+from llmonk.evaluate.code_contests_utils.schema import ExecuteCodeRequest, ExecuteCodeResult
 MAX_CONCURRENT_REQUESTS = os.cpu_count() * 2
 NUM_RETRIES = 1
 RETRY_BACKOFF = 3
 
+import tempfile
+import math
+import subprocess
+from llmonk.evaluate.code_contests_utils.compare_results import outputs_match
+
+def execute_with_input(
+    code_file_name: str, input_str: str, timeout: float, memory_limit_bytes: int
+):
+    with tempfile.NamedTemporaryFile(mode="w+", delete=True) as temp_input_file:
+        temp_input_file.write(input_str)
+        temp_input_file.flush()  # Ensure the data is written to disk
+
+        # Rewind the file so the subprocess reads it from the beginning
+        temp_input_file.seek(0)
+
+        try:
+            memory_limit_kb = math.ceil(memory_limit_bytes / 1024)
+            cmd = f"ulimit -v {memory_limit_kb} && python {code_file_name}"
+
+            try:
+                result = subprocess.run(
+                    ["bash", "-c", cmd],
+                    capture_output=True,
+                    stdin=temp_input_file.fileno(),
+                    timeout=timeout,
+                )
+            except subprocess.TimeoutExpired:
+                return None
+            
+            return result.stdout.decode()
+        except Exception as e:
+            return None
+
+def execute_python_code(request: ExecuteCodeRequest):
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".py", delete=True) as temp:
+            
+            with open(temp.name, "w") as f:
+                f.write(request.code)
+
+            for input_str, expected_output in request.input_expected_output_pairs:
+                # Intentionally serial - most programs fail.
+                actual_output = execute_with_input(
+                    code_file_name=temp.name,
+                    input_str=input_str,
+                    timeout=request.timeout,
+                    memory_limit_bytes=request.memory_limit_bytes,
+                )
+
+                if actual_output is None or not outputs_match(expected_output, actual_output):
+                    return ExecuteCodeResult(correct=False)
+
+            return ExecuteCodeResult(correct=True)
+    except Exception as e:
+        print(f"Failed to execute code: \n {e}")
 
 def is_valid_python(snippet):
     try:
