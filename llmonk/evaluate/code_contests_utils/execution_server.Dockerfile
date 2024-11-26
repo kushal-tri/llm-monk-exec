@@ -14,9 +14,9 @@ RUN pip install fastapi uvicorn typer
 WORKDIR /app
 
 # Copy the current directory contents into the container at /app
-COPY execution_server.py /app
-COPY schema.py /app
-COPY compare_results.py /app
+COPY llmonk/evaluate/code_contests_utils/execution_server.py /app
+COPY llmonk/evaluate/code_contests_utils/schema.py /app
+COPY llmonk/evaluate/code_contests_utils/compare_results.py /app
 
 # Make port 8004 available to the world outside this container
 EXPOSE 8004

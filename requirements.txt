@@ -4,6 +4,5 @@ torch==2.4.0
 vllm==0.5.4
 tqdm==4.66.3
 git+https://github.com/EleutherAI/lm-evaluation-harness.git@8b41f92
--e .
 docker==7.1.0
 antlr4-python3-runtime==4.11

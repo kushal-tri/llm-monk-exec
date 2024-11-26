@@ -24,8 +24,11 @@ flags.DEFINE_integer('max_solutions', 256, 'Maximum number of solutions to evalu
 flags.DEFINE_float('per_testcases', -1.0, 'Percentage of testcases to evaluate')
 
 from llmonk.evaluate.code_contests_utils.schema import ExecuteCodeRequest, ExecuteCodeResult
-MAX_CONCURRENT_REQUESTS = os.cpu_count() * 2
-# semaphore = threading.Semaphore(value=MAX_CONCURRENT_REQUESTS)
+MAX_CONCURRENT_REQUESTS = os.cpu_count()
+MAX_CONCURRENT_PROGRAMS = os.cpu_count() * 0.75
+semaphore = threading.Semaphore(value=MAX_CONCURRENT_REQUESTS)
+semaphore2 = threading.Semaphore(value=MAX_CONCURRENT_PROGRAMS)
+
 NUM_RETRIES = 1
 RETRY_BACKOFF = 3
 
@@ -39,7 +42,8 @@ def execute_with_input(
 ):
 
     try:
-        with tempfile.NamedTemporaryFile(mode="w+", delete=True) as temp_input_file:
+        with semaphore2, \
+         tempfile.NamedTemporaryFile(mode="w+", delete=True) as temp_input_file:
             temp_input_file.write(input_str)
             temp_input_file.flush()  # Ensure the data is written to disk
 
@@ -57,7 +61,7 @@ def execute_with_input(
                     timeout=timeout,
                 )
             except subprocess.TimeoutExpired:
-                print(f"{cmd} {temp_input_file.name} timed out. Timeout was {timeout}")
+                # print(f"{cmd} {temp_input_file.name} timed out. Timeout was {timeout}")
                 return None
             
             return result.stdout.decode()
@@ -133,15 +137,40 @@ def solution_is_correct(
     )
     is_correct = False
     code = extract_first_code(code)
-    if code is not None:
-        is_correct = execute_python_code(
-            ExecuteCodeRequest(
-                code=code,
-                input_expected_output_pairs=input_expected_output_pairs,
-                timeout=problem["timeout"] + 10,  # buffer for 10
-                memory_limit_bytes=2_000_000_000_000,  # double max limit
-        )).correct
+    with semaphore:
+        if code is not None:
+            is_correct = execute_python_code(
+                ExecuteCodeRequest(
+                    code=code,
+                    input_expected_output_pairs=input_expected_output_pairs,
+                    timeout=problem["timeout"] + 10,  # buffer for 10
+                    memory_limit_bytes=2_000_000_000_000,  # double max limit
+            )).correct
     return is_correct
+
+def grade_problems_orig(
+    solutions_data: dict,
+    output_dir: Path,
+):
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=MAX_CONCURRENT_REQUESTS // 2
+    ) as executor:
+        is_corrects_futures = [
+            executor.submit(
+                solution_is_correct,
+                code=code,
+                problem=solutions_data,
+            )
+            for code in solutions_data["solutions"]
+        ]
+
+        is_corrects = []
+        for i, future in enumerate(concurrent.futures.as_completed(is_corrects_futures)):
+            if i % 100 == 0:
+                print("Progress being made...")
+            is_corrects.append(future.result(timeout=30))
+
+        solutions_data["is_corrects"] = is_corrects
 
 def grade_problems(
     solutions_data: dict,
@@ -164,7 +193,7 @@ def grade_problems(
         is_corrects_list = [[]] * len(solutions_data) 
         for future in tqdm(concurrent.futures.as_completed(future_to_index), total=len(future_to_index), desc="Running tests on problem"):
             idx = future_to_index[future]
-            is_corrects_list[idx].append(future.result(timeout=10))
+            is_corrects_list[idx].append(future.result(timeout=30))
         
         for idx, is_corrects in enumerate(is_corrects_list):
             solutions_data[idx]["is_corrects"] = is_corrects
@@ -204,6 +233,26 @@ def main(_):
     solutions_data = load_data_from_dataset(ds, solution_col=FLAGS.solution_col, max_solutions=FLAGS.max_solutions, per_testcases=FLAGS.per_testcases)
     grade_problems(solutions_data, FLAGS.save_dir)
 
+    # # threads are used to run code in parallel
+    # with concurrent.futures.ThreadPoolExecutor(
+    #     max_workers=FLAGS.num_workers
+    # ) as executor:
+    #     futures = [
+    #         executor.submit(
+    #             grade_problems_orig,
+    #             solutions_data=solution_data,
+    #             output_dir=FLAGS.save_dir,
+    #         )
+    #         for solution_data in solutions_data
+    #     ]
+
+    #     for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Running tests on problem"):
+    #         future.result()
+    
+
+    hf_token = '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'
+    os.environ['HF_TOKEN'] = hf_token
+    
     df = pd.DataFrame(solutions_data)
     ds = datasets.Dataset.from_pandas(df)
     if FLAGS.per_testcases > 0:
